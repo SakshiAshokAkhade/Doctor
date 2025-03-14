@@ -3,5 +3,3 @@ numpy
 scikit-learn
 streamlit
 openpyxl  # If reading Excel files
-pickle
-
