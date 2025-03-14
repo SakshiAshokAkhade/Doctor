@@ -5,6 +5,7 @@ import numpy as np
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder
+import matplotlib.pyplot as plt
 
 # Load dataset with caching
 @st.cache_data
@@ -40,28 +41,32 @@ def train_model():
 model = train_model()
 
 # Streamlit UI
-st.title("Doctor Survey Prediction")
-st.write("Enter a time to predict which doctors are most likely to attend the survey.")
+st.title("🩺 Doctor Survey Prediction")
+st.write("### 👋 Welcome! Select a time to predict which doctors are most likely to attend the survey.")
 
 # User Input
 selected_hour = st.slider("Select an hour", 0, 23, 12)
 
-# Predict function
-def predict_doctors(hour):
-    X_input = np.array([[hour, df['Usage Time (mins)'].mean(), 0, 0, 0, df['Count of Survey Attempts'].mean()]])
-    return model.predict(X_input)
-
-predicted_np_ids = predict_doctors(selected_hour)
-
-# Display Results
-st.write("### Predicted NPIs:")
-st.write(predicted_np_ids)
-
-# Export as CSV
-output_df = pd.DataFrame({"NPI": predicted_np_ids})
-st.download_button(
-    label="Download CSV",
-    data=output_df.to_csv(index=False),
-    file_name="predicted_doctors.csv",
-    mime="text/csv",
-)
+# Button to trigger prediction
+if st.button("🔍 Show Doctor Availability"):
+    # Compute available doctors at selected hour
+    available_doctors = df[df['Hour'] == selected_hour]['NPI'].nunique()
+    
+    # Display Results
+    st.success(f"✅ Total Available Doctors at {selected_hour}:00 → **{available_doctors}**")
+    
+    # Plot Doctor Availability by Hour
+    st.write("### 📊 Doctor Availability by Hour")
+    fig, ax = plt.subplots()
+    df.groupby('Hour')['NPI'].nunique().plot(kind='bar', ax=ax, color='skyblue')
+    ax.set_xlabel("Hour of Day")
+    ax.set_ylabel("Number of Doctors Available")
+    st.pyplot(fig)
+    
+    # Export as CSV
+    st.download_button(
+        label="📥 Download CSV",
+        data=df[df['Hour'] == selected_hour][['NPI']].to_csv(index=False),
+        file_name="available_doctors.csv",
+        mime="text/csv",
+    )
