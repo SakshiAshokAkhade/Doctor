@@ -1,112 +1,67 @@
-import pandas as pd
-import numpy as np
 import streamlit as st
+import pandas as pd
+import pickle
+import numpy as np
 from sklearn.ensemble import RandomForestClassifier
+from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder
 
-# Load dataset function
+# Load dataset with caching
 @st.cache_data
 def load_data():
-    try:
-        df = pd.read_excel("dummy_npi_data.xlsx", engine='openpyxl')
-        df.columns = df.columns.str.strip()  # Remove leading/trailing spaces
-        return df
-    except Exception as e:
-        st.error(f"Error loading dataset: {e}")
-        return None
-
-df = load_data()
-
-# Stop execution if the dataset isn't loaded
-if df is None:
-    st.stop()
-
-# Sidebar
-st.sidebar.title("🔍 Doctor Survey Prediction")
-st.sidebar.success("Use this tool to predict doctor availability for surveys.")
-
-# Main title
-st.markdown("# 🏥 Doctor Survey Availability Predictor")
-
-# Preprocessing function
-def preprocess_data(df):
-    df = df.dropna()
-    df['Login Time'] = pd.to_datetime(df['Login Time'], errors='coerce').dt.hour
-    df['Logout Time'] = pd.to_datetime(df['Logout Time'], errors='coerce').dt.hour
-    df.dropna(subset=['Login Time', 'Logout Time'], inplace=True)
-    df['Login Time'] = df['Login Time'].astype(int)
-    df['Logout Time'] = df['Logout Time'].astype(int)
+    file_path = "dummy_npi_data.xlsx"
+    df = pd.read_excel(file_path, sheet_name="Dataset")
+    df['Login Time'] = pd.to_datetime(df['Login Time'])
+    df['Logout Time'] = pd.to_datetime(df['Logout Time'])
+    df['Hour'] = df['Login Time'].dt.hour
     
-    le_speciality = LabelEncoder()
-    le_state = LabelEncoder()
-    df['Speciality'] = le_speciality.fit_transform(df['Speciality'])
-    df['State'] = le_state.fit_transform(df['State'])
-
-    X = df[['Speciality', 'State', 'Login Time', 'Logout Time', 'Usage Time (mins)', 'Count of Survey Attempts']]
-    y = (df['Count of Survey Attempts'] > 1).astype(int)
+    # Encoding categorical variables
+    label_enc_region = LabelEncoder()
+    label_enc_speciality = LabelEncoder()
+    label_enc_state = LabelEncoder()
+    df['Region'] = label_enc_region.fit_transform(df['Region'])
+    df['Speciality'] = label_enc_speciality.fit_transform(df['Speciality'])
+    df['State'] = label_enc_state.fit_transform(df['State'])
     
-    return df, X, y, le_speciality, le_state
+    return df, label_enc_region, label_enc_speciality, label_enc_state
 
-df, X, y, le_speciality, le_state = preprocess_data(df)
+df, label_enc_region, label_enc_speciality, label_enc_state = load_data()
 
-# Train Model
+# Train and save model only once
 @st.cache_resource
 def train_model():
-    model = RandomForestClassifier(n_estimators=100, random_state=42)
-    model.fit(X, y)
+    X = df[['Hour', 'Usage Time (mins)', 'Region', 'State', 'Speciality', 'Count of Survey Attempts']]
+    y = df['NPI']
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+    model = RandomForestClassifier(n_estimators=50, random_state=42)  # Reduced n_estimators for speed
+    model.fit(X_train, y_train)
     return model
 
 model = train_model()
 
-st.markdown("## ⏳ Select Time to Predict Doctor Availability")
-time_input = st.slider("Select Time (Hour)", 0, 23, 12)
+# Streamlit UI
+st.title("Doctor Survey Prediction")
+st.write("Enter a time to predict which doctors are most likely to attend the survey.")
 
-# Prediction function
-def predict_doctors(time_input):
-    df['Login Time'] = df['Login Time'].astype(int)
-    df_filtered = df[df['Login Time'] == time_input]
-    
-    if df_filtered.empty:
-        closest_time_idx = (df['Login Time'] - time_input).abs().idxmin()
-        closest_time = df.loc[closest_time_idx, 'Login Time']
-        df_filtered = df[df['Login Time'] == closest_time]
-        st.warning(f"⚠️ No doctors available at {time_input}:00. Trying closest available time: {closest_time}:00")
-    
-    if df_filtered.empty:
-        st.error("❌ No doctors found for this time.")
-        return pd.DataFrame(columns=['NPI'])
-    
-    st.markdown("### 🔍 Available Doctors")
-    count = df_filtered.shape[0]
-    st.metric("✅ Available Doctors", count)
-    
-    # Convert encoded values back to names
-    df_filtered['Speciality'] = le_speciality.inverse_transform(df_filtered['Speciality'])
-    df_filtered['State'] = le_state.inverse_transform(df_filtered['State'])
-    
-    st.dataframe(df_filtered[['NPI', 'Speciality', 'State', 'Login Time']])
-    
-    required_features = ['Speciality', 'State', 'Login Time', 'Logout Time', 'Usage Time (mins)', 'Count of Survey Attempts']
-    X_filtered = df_filtered[required_features]
-    
-    if X_filtered.empty:
-        st.warning("⚠️ No matching data found for the selected time.")
-        return pd.DataFrame(columns=['NPI'])
-    
-    predictions = model.predict(X_filtered)
-    df_filtered['Prediction'] = predictions
-    result = df_filtered[df_filtered['Prediction'] == 1][['NPI', 'State', 'Speciality', 'Login Time']]
-    
-    if result.empty:
-        st.error("❌ No doctors predicted to attend at this time.")
-    
-    return result
+# User Input
+selected_hour = st.slider("Select an hour", 0, 23, 12)
 
-if st.button("🔍 Get Doctor List"):
-    result = predict_doctors(time_input)
-    if not result.empty:
-        st.markdown("### ✅ Predicted Doctors")
-        st.dataframe(result)
-        
-        csv = result.to_csv(index=False).encode('utf-8')
-        st.download_button(label="📥 Download CSV", data=csv, file_name="doctor_list.csv", mime="text/csv")   
+# Predict function
+def predict_doctors(hour):
+    X_input = np.array([[hour, df['Usage Time (mins)'].mean(), 0, 0, 0, df['Count of Survey Attempts'].mean()]])
+    return model.predict(X_input)
+
+predicted_np_ids = predict_doctors(selected_hour)
+
+# Display Results
+st.write("### Predicted NPIs:")
+st.write(predicted_np_ids)
+
+# Export as CSV
+output_df = pd.DataFrame({"NPI": predicted_np_ids})
+st.download_button(
+    label="Download CSV",
+    data=output_df.to_csv(index=False),
+    file_name="predicted_doctors.csv",
+    mime="text/csv",
+)
